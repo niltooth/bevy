@@ -497,144 +497,131 @@ impl PipelineCache {
                 let mut shader_cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
 
-                //Handle Mesh shaders
-                if let Some(mesh_shader) = &descriptor.mesh_shader {
-                    let mesh_module = match shader_cache.get(
-                        id,
-                        mesh_shader.mesh.shader.id(),
-                        &mesh_shader.mesh.shader_defs,
-                    ) {
-                        Ok(module) => module,
-                        Err(err) => return Err(err),
-                    };
-
-                    //task
-                    //
-                    ////fragment
-
-                    //duplicate
-                    let layout = if descriptor.layout.is_empty() && descriptor.immediate_size == 0 {
-                        None
-                    } else {
-                        Some(layout_cache.get(
-                            &device,
-                            &bind_group_layout,
-                            descriptor.immediate_size,
-                        ))
-                    };
-
-                    drop((shader_cache, layout_cache));
-
-                    //mesh constants
-                    //
-                    //task data
-                    //
-                    //fragment data
-                    //
-                    ////raw
-                    Ok(Pipeline::RenderPipeline(
-                        device.create_mesh_pipeline(&descriptor),
-                    ))
+                let layout = if descriptor.layout.is_empty() && descriptor.immediate_size == 0 {
+                    None
                 } else {
-                    //Vertex shaders
-                    let vertex_module = match shader_cache.get(
-                        id,
-                        descriptor.vertex.shader.id(),
-                        &descriptor.vertex.shader_defs,
-                    ) {
-                        Ok(module) => module,
-                        Err(err) => return Err(err),
-                    };
+                    Some(layout_cache.get(&device, &bind_group_layout, descriptor.immediate_size))
+                };
 
-                    let fragment_module = match &descriptor.fragment {
-                        Some(fragment) => {
-                            match shader_cache.get(id, fragment.shader.id(), &fragment.shader_defs)
-                            {
-                                Ok(module) => Some(module),
-                                Err(err) => return Err(err),
-                            }
+                drop(layout_cache);
+
+                ////fragment
+                let fragment_module = match &descriptor.fragment {
+                    Some(fragment) => {
+                        match shader_cache.get(id, fragment.shader.id(), &fragment.shader_defs) {
+                            Ok(module) => Some(module),
+                            Err(err) => return Err(err),
                         }
-                        None => None,
-                    };
+                    }
+                    None => None,
+                };
+                let fragment_data = descriptor.fragment.as_ref().map(|fragment| {
+                    (
+                        fragment_module.unwrap(),
+                        fragment.entry_point.as_deref(),
+                        fragment.targets.as_slice(),
+                        fragment
+                            .constants
+                            .iter()
+                            .map(|(k, v)| (k.as_ref(), *v))
+                            .collect::<Vec<_>>(),
+                    )
+                });
 
-                    let layout = if descriptor.layout.is_empty() && descriptor.immediate_size == 0 {
-                        None
-                    } else {
-                        Some(layout_cache.get(
-                            &device,
-                            &bind_group_layout,
-                            descriptor.immediate_size,
-                        ))
-                    };
+                //Handle Mesh shaders
+                match &descriptor.mesh_shader {
+                    Some(mesh_shader) => {
+                        let mesh_module = match shader_cache.get(
+                            id,
+                            mesh_shader.mesh.shader.id(),
+                            &mesh_shader.mesh.shader_defs,
+                        ) {
+                            Ok(module) => module,
+                            Err(err) => return Err(err),
+                        };
 
-                    drop((shader_cache, layout_cache));
+                        //task
+                        let task_module = match &mesh_shader.task {
+                            Some(task) => {}
+                            None => None,
+                        };
 
-                    let vertex_buffer_layouts = descriptor
-                        .vertex
-                        .buffers
-                        .iter()
-                        .map(|layout| RawVertexBufferLayout {
-                            array_stride: layout.array_stride,
-                            attributes: &layout.attributes,
-                            step_mode: layout.step_mode,
-                        })
-                        .collect::<Vec<_>>();
+                        drop(shader_cache);
 
-                    let fragment_data = descriptor.fragment.as_ref().map(|fragment| {
-                        (
-                            fragment_module.unwrap(),
-                            fragment.entry_point.as_deref(),
-                            fragment.targets.as_slice(),
-                            fragment
-                                .constants
-                                .iter()
-                                .map(|(k, v)| (k.as_ref(), *v))
-                                .collect::<Vec<_>>(),
-                        )
-                    });
+                        //mesh constants
+                        //
+                        //task data
+                        //
+                        ////raw
+                        Ok(Pipeline::RenderPipeline(device.create_mesh_pipeline(&raw)))
+                    }
+                    None => {
+                        //Vertex shaders
+                        let vertex_module = match shader_cache.get(
+                            id,
+                            descriptor.vertex.shader.id(),
+                            &descriptor.vertex.shader_defs,
+                        ) {
+                            Ok(module) => module,
+                            Err(err) => return Err(err),
+                        };
 
-                    let vertex_constants: Vec<(&str, f64)> = descriptor
-                        .vertex
-                        .constants
-                        .iter()
-                        .map(|(k, v)| (k.as_ref(), *v))
-                        .collect();
+                        drop(shader_cache);
 
-                    let descriptor = RawRenderPipelineDescriptor {
-                        multiview_mask: None,
-                        depth_stencil: descriptor.depth_stencil.clone(),
-                        label: descriptor.label.as_deref(),
-                        layout: layout.as_ref().map(|layout| -> &PipelineLayout { layout }),
-                        multisample: descriptor.multisample,
-                        primitive: descriptor.primitive,
-                        vertex: RawVertexState {
-                            buffers: &vertex_buffer_layouts,
-                            entry_point: descriptor.vertex.entry_point.as_deref(),
-                            module: &vertex_module,
-                            compilation_options: PipelineCompilationOptions {
-                                constants: &vertex_constants,
-                                zero_initialize_workgroup_memory: descriptor
-                                    .zero_initialize_workgroup_memory,
-                            },
-                        },
-                        fragment: fragment_data.as_ref().map(
-                            |(module, entry_point, targets, constants)| RawFragmentState {
-                                entry_point: entry_point.as_deref(),
-                                module,
-                                targets,
+                        let vertex_buffer_layouts = descriptor
+                            .vertex
+                            .buffers
+                            .iter()
+                            .map(|layout| RawVertexBufferLayout {
+                                array_stride: layout.array_stride,
+                                attributes: &layout.attributes,
+                                step_mode: layout.step_mode,
+                            })
+                            .collect::<Vec<_>>();
+
+                        let vertex_constants: Vec<(&str, f64)> = descriptor
+                            .vertex
+                            .constants
+                            .iter()
+                            .map(|(k, v)| (k.as_ref(), *v))
+                            .collect();
+
+                        let raw = RawRenderPipelineDescriptor {
+                            multiview_mask: None,
+                            depth_stencil: descriptor.depth_stencil.clone(),
+                            label: descriptor.label.as_deref(),
+                            layout: layout.as_ref().map(|layout| -> &PipelineLayout { layout }),
+                            multisample: descriptor.multisample,
+                            primitive: descriptor.primitive,
+                            vertex: RawVertexState {
+                                buffers: &vertex_buffer_layouts,
+                                entry_point: descriptor.vertex.entry_point.as_deref(),
+                                module: &vertex_module,
                                 compilation_options: PipelineCompilationOptions {
-                                    constants,
+                                    constants: &vertex_constants,
                                     zero_initialize_workgroup_memory: descriptor
                                         .zero_initialize_workgroup_memory,
                                 },
                             },
-                        ),
-                        cache: None,
-                    };
+                            fragment: fragment_data.as_ref().map(
+                                |(module, entry_point, targets, constants)| RawFragmentState {
+                                    entry_point: entry_point.as_deref(),
+                                    module,
+                                    targets,
+                                    compilation_options: PipelineCompilationOptions {
+                                        constants,
+                                        zero_initialize_workgroup_memory: descriptor
+                                            .zero_initialize_workgroup_memory,
+                                    },
+                                },
+                            ),
+                            cache: None,
+                        };
 
-                    Ok(Pipeline::RenderPipeline(
-                        device.create_render_pipeline(&descriptor),
-                    ))
+                        Ok(Pipeline::RenderPipeline(
+                            device.create_render_pipeline(&raw),
+                        ))
+                    }
                 }
             },
             self.synchronous_pipeline_compilation,
