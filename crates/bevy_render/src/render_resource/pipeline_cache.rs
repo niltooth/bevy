@@ -528,7 +528,7 @@ impl PipelineCache {
                     )
                 });
 
-                //Handle Mesh shaders
+                //Handle different types
                 match &descriptor.mesh_shader {
                     Some(mesh_shader) => {
                         let mesh_module = match shader_cache.get(
@@ -540,19 +540,77 @@ impl PipelineCache {
                             Err(err) => return Err(err),
                         };
 
-                        //task
                         let task_module = match &mesh_shader.task {
-                            Some(task) => {}
+                            Some(task) => {
+                                match shader_cache.get(id, task.shader.id(), &task.shader_defs) {
+                                    Ok(module) => Some(module),
+                                    Err(err) => return Err(err),
+                                }
+                            }
                             None => None,
                         };
 
                         drop(shader_cache);
 
-                        //mesh constants
-                        //
-                        //task data
-                        //
-                        ////raw
+                        let mesh_constants: Vec<(&str, f64)> = mesh_shader
+                            .mesh
+                            .constants
+                            .iter()
+                            .map(|(k, v)| (k.as_ref(), *v))
+                            .collect();
+
+                        let task_data = mesh_shader.task.as_ref().map(|task| {
+                            (
+                                task_module.clone().unwrap(),
+                                task.entry_point.clone(),
+                                task.constants
+                                    .iter()
+                                    .map(|(k, v)| (k.as_ref(), *v))
+                                    .collect::<Vec<_>>(),
+                            )
+                        });
+                        let raw = RawMeshPipelineDescriptor {
+                            multiview: None,
+                            depth_stencil: descriptor.depth_stencil.clone(),
+                            label: descriptor.label.as_deref(),
+                            layout: layout.as_ref().map(|layout| -> &PipelineLayout { layout }),
+                            multisample: descriptor.multisample,
+                            primitive: descriptor.primitive,
+                            task: task_data.as_ref().map(|(module, entry_point, constants)| {
+                                RawTaskState {
+                                    module,
+                                    entry_point: entry_point.as_deref(),
+                                    compilation_options: PipelineCompilationOptions {
+                                        constants,
+                                        zero_initialize_workgroup_memory: descriptor
+                                            .zero_initialize_workgroup_memory,
+                                    },
+                                }
+                            }),
+                            mesh: RawMeshState {
+                                module: &mesh_module,
+                                entry_point: mesh_shader.mesh.entry_point.as_deref(),
+                                compilation_options: PipelineCompilationOptions {
+                                    constants: &mesh_constants,
+                                    zero_initialize_workgroup_memory: descriptor
+                                        .zero_initialize_workgroup_memory,
+                                },
+                            },
+                            fragment: fragment_data.as_ref().map(
+                                |(module, entry_point, targets, constants)| RawFragmentState {
+                                    entry_point: entry_point.as_deref(),
+                                    module,
+                                    targets,
+                                    compilation_options: PipelineCompilationOptions {
+                                        constants,
+                                        zero_initialize_workgroup_memory: descriptor
+                                            .zero_initialize_workgroup_memory,
+                                    },
+                                },
+                            ),
+                            cache: None,
+                        };
+
                         Ok(Pipeline::RenderPipeline(device.create_mesh_pipeline(&raw)))
                     }
                     None => {
