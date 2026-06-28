@@ -89,6 +89,7 @@ type LayoutCacheKey = (
     SmallVec<[BindGroupLayoutId; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>,
     ImmediateSize,
 );
+type RenderShaderCache = ShaderCache<WgpuWrapper<ShaderModule>, RenderDevice>;
 #[derive(Default)]
 struct LayoutCache {
     layouts: HashMap<LayoutCacheKey, Arc<WgpuWrapper<PipelineLayout>>>,
@@ -505,13 +506,26 @@ impl PipelineCache {
 
                 drop(layout_cache);
 
-                let pipeline = create_pipeline_from_descriptor(
-                    &descriptor,
-                    &device,
-                    layout.as_ref().map(|layout| -> &PipelineLayout { layout }),
-                    &mut shader_cache,
-                    id,
-                )?;
+                let pipeline = match &descriptor {
+                    PipelineDescriptor::RenderPipelineDescriptor(descriptor) => {
+                        Self::create_render_pipeline(
+                            descriptor,
+                            &device,
+                            layout.as_ref().map(|layout| -> &PipelineLayout { layout }),
+                            &mut shader_cache,
+                            id,
+                        )?
+                    }
+                    PipelineDescriptor::ComputePipelineDescriptor(descriptor) => {
+                        Self::create_compute_pipeline(
+                            descriptor,
+                            &device,
+                            layout.as_ref().map(|layout| -> &PipelineLayout { layout }),
+                            &mut shader_cache,
+                            id,
+                        )?
+                    }
+                };
 
                 drop(shader_cache);
 
@@ -519,6 +533,125 @@ impl PipelineCache {
             },
             self.synchronous_pipeline_compilation,
         )
+    }
+
+    fn create_render_pipeline(
+        descriptor: &RenderPipelineDescriptor,
+        device: &RenderDevice,
+        layout: Option<&PipelineLayout>,
+        shader_cache: &mut RenderShaderCache,
+        id: CachedPipelineId,
+    ) -> Result<Pipeline, ShaderCacheError> {
+        let vertex_module = shader_cache.get(
+            id,
+            descriptor.vertex.shader.id(),
+            &descriptor.vertex.shader_defs,
+        )?;
+
+        let fragment_module = descriptor
+            .fragment
+            .as_ref()
+            .map(|f| shader_cache.get(id, f.shader.id(), &f.shader_defs))
+            .transpose()?;
+
+        let vertex_buffer_layouts = descriptor
+            .vertex
+            .buffers
+            .iter()
+            .map(|layout| RawVertexBufferLayout {
+                array_stride: layout.array_stride,
+                attributes: &layout.attributes,
+                step_mode: layout.step_mode,
+            })
+            .collect::<Vec<_>>();
+
+        let fragment_data = descriptor.fragment.as_ref().map(|fragment| {
+            (
+                fragment_module.unwrap(),
+                fragment.entry_point.as_deref(),
+                fragment.targets.as_slice(),
+                fragment
+                    .constants
+                    .iter()
+                    .map(|(k, v)| (k.as_ref(), *v))
+                    .collect::<Vec<_>>(),
+            )
+        });
+
+        let vertex_constants: Vec<(&str, f64)> = descriptor
+            .vertex
+            .constants
+            .iter()
+            .map(|(k, v)| (k.as_ref(), *v))
+            .collect();
+
+        let raw = RawRenderPipelineDescriptor {
+            layout,
+            multiview_mask: None,
+            depth_stencil: descriptor.depth_stencil.clone(),
+            label: descriptor.label.as_deref(),
+            multisample: descriptor.multisample,
+            primitive: descriptor.primitive,
+            vertex: RawVertexState {
+                buffers: &vertex_buffer_layouts,
+                entry_point: descriptor.vertex.entry_point.as_deref(),
+                module: &vertex_module,
+                compilation_options: PipelineCompilationOptions {
+                    constants: &vertex_constants,
+                    zero_initialize_workgroup_memory: descriptor.zero_initialize_workgroup_memory,
+                },
+            },
+            fragment: fragment_data
+                .as_ref()
+                .map(
+                    |(module, entry_point, targets, constants)| RawFragmentState {
+                        entry_point: entry_point.as_deref(),
+                        module,
+                        targets,
+                        compilation_options: PipelineCompilationOptions {
+                            constants,
+                            zero_initialize_workgroup_memory: descriptor
+                                .zero_initialize_workgroup_memory,
+                        },
+                    },
+                ),
+            cache: None,
+        };
+
+        Ok(Pipeline::RenderPipeline(
+            device.create_render_pipeline(&raw),
+        ))
+    }
+
+    fn create_compute_pipeline(
+        descriptor: &ComputePipelineDescriptor,
+        device: &RenderDevice,
+        layout: Option<&PipelineLayout>,
+        shader_cache: &mut RenderShaderCache,
+        id: CachedPipelineId,
+    ) -> Result<Pipeline, ShaderCacheError> {
+        let compute_module =
+            shader_cache.get(id, descriptor.shader.id(), &descriptor.shader_defs)?;
+        let constants: Vec<(&str, f64)> = descriptor
+            .constants
+            .iter()
+            .map(|(k, v)| (k.as_ref(), *v))
+            .collect();
+        let raw = RawComputePipelineDescriptor {
+            layout,
+            label: descriptor.label.as_deref(),
+            module: &compute_module,
+            entry_point: descriptor.entry_point.as_deref(),
+            compilation_options: PipelineCompilationOptions {
+                constants: &constants,
+                zero_initialize_workgroup_memory: descriptor.zero_initialize_workgroup_memory,
+            },
+            cache: None,
+        };
+
+        Ok(Pipeline::ComputePipeline(
+            device.create_compute_pipeline(&raw),
+        ))
     }
 
     /// Process the pipeline queue and create all pending pipelines if possible.
@@ -682,117 +815,6 @@ fn pipeline_error_context(cached_pipeline: &CachedPipeline) -> String {
         }
         PipelineDescriptor::ComputePipelineDescriptor(desc) => {
             format(&desc.shader, &desc.entry_point, &desc.shader_defs)
-        }
-    }
-}
-
-type RenderShaderCache = ShaderCache<WgpuWrapper<ShaderModule>, RenderDevice>;
-fn create_pipeline_from_descriptor(
-    descriptor: &PipelineDescriptor,
-    device: &RenderDevice,
-    layout: Option<&PipelineLayout>,
-    shader_cache: &mut RenderShaderCache,
-    id: CachedPipelineId,
-) -> Result<Pipeline, ShaderCacheError> {
-    match descriptor {
-        PipelineDescriptor::RenderPipelineDescriptor(desc) => {
-            let vertex_module =
-                shader_cache.get(id, desc.vertex.shader.id(), &desc.vertex.shader_defs)?;
-            let fragment_module = desc
-                .fragment
-                .as_ref()
-                .map(|f| shader_cache.get(id, f.shader.id(), &f.shader_defs))
-                .transpose()?;
-
-            let vertex_buffer_layouts = desc
-                .vertex
-                .buffers
-                .iter()
-                .map(|layout| RawVertexBufferLayout {
-                    array_stride: layout.array_stride,
-                    attributes: &layout.attributes,
-                    step_mode: layout.step_mode,
-                })
-                .collect::<Vec<_>>();
-
-            let fragment_data = desc.fragment.as_ref().map(|fragment| {
-                (
-                    fragment_module.unwrap(),
-                    fragment.entry_point.as_deref(),
-                    fragment.targets.as_slice(),
-                    fragment
-                        .constants
-                        .iter()
-                        .map(|(k, v)| (k.as_ref(), *v))
-                        .collect::<Vec<_>>(),
-                )
-            });
-
-            let vertex_constants: Vec<(&str, f64)> = desc
-                .vertex
-                .constants
-                .iter()
-                .map(|(k, v)| (k.as_ref(), *v))
-                .collect();
-
-            let raw = RawRenderPipelineDescriptor {
-                layout,
-                cache: None,
-                multiview_mask: None,
-                depth_stencil: desc.depth_stencil.clone(),
-                label: desc.label.as_deref(),
-                multisample: desc.multisample,
-                primitive: desc.primitive,
-                vertex: RawVertexState {
-                    buffers: &vertex_buffer_layouts,
-                    module: &vertex_module,
-                    entry_point: desc.vertex.entry_point.as_deref(),
-                    compilation_options: PipelineCompilationOptions {
-                        constants: &vertex_constants,
-                        zero_initialize_workgroup_memory: desc.zero_initialize_workgroup_memory,
-                    },
-                },
-                fragment: fragment_data.as_ref().map(
-                    |(module, entry_point, targets, constants)| RawFragmentState {
-                        module,
-                        targets,
-                        entry_point: entry_point.as_deref(),
-                        compilation_options: PipelineCompilationOptions {
-                            constants,
-                            zero_initialize_workgroup_memory: desc.zero_initialize_workgroup_memory,
-                        },
-                    },
-                ),
-            };
-
-            Ok(Pipeline::RenderPipeline(
-                device.create_render_pipeline(&raw),
-            ))
-        }
-        PipelineDescriptor::ComputePipelineDescriptor(desc) => {
-            let compute_module = shader_cache.get(id, desc.shader.id(), &desc.shader_defs)?;
-
-            let constants: Vec<(&str, f64)> = desc
-                .constants
-                .iter()
-                .map(|(k, v)| (k.as_ref(), *v))
-                .collect();
-
-            let raw = RawComputePipelineDescriptor {
-                layout,
-                cache: None,
-                label: desc.label.as_deref(),
-                module: &compute_module,
-                entry_point: desc.entry_point.as_deref(),
-                compilation_options: PipelineCompilationOptions {
-                    constants: &constants,
-                    zero_initialize_workgroup_memory: desc.zero_initialize_workgroup_memory,
-                },
-            };
-
-            Ok(Pipeline::ComputePipeline(
-                device.create_compute_pipeline(&raw),
-            ))
         }
     }
 }
