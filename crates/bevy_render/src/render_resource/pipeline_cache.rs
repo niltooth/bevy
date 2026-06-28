@@ -506,12 +506,13 @@ impl PipelineCache {
 
                 drop(layout_cache);
 
+                let layout_ref = layout.as_ref().map(|layout| -> &PipelineLayout { layout });
                 let pipeline = match &descriptor {
                     PipelineDescriptor::RenderPipelineDescriptor(descriptor) => {
                         Self::create_render_pipeline(
                             descriptor,
                             &device,
-                            layout.as_ref().map(|layout| -> &PipelineLayout { layout }),
+                            layout_ref,
                             &mut shader_cache,
                             id,
                         )?
@@ -520,7 +521,7 @@ impl PipelineCache {
                         Self::create_compute_pipeline(
                             descriptor,
                             &device,
-                            layout.as_ref().map(|layout| -> &PipelineLayout { layout }),
+                            layout_ref,
                             &mut shader_cache,
                             id,
                         )?
