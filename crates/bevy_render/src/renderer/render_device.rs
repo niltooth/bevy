@@ -1,7 +1,7 @@
 use super::RenderQueue;
 use crate::render_resource::{
-    BindGroup, BindGroupLayout, Buffer, ComputePipeline, RawRenderPipelineDescriptor,
-    RenderPipeline, Sampler, Texture,
+    BindGroup, BindGroupLayout, Buffer, ComputePipeline, RawMeshPipelineDescriptor,
+    RawRenderPipelineDescriptor, RenderPipeline, Sampler, Texture,
 };
 use crate::renderer::WgpuWrapper;
 use bevy_ecs::resource::Resource;
@@ -198,6 +198,13 @@ impl RenderDevice {
     ) -> ComputePipeline {
         let wgpu_compute_pipeline = self.device.create_compute_pipeline(desc);
         ComputePipeline::from(wgpu_compute_pipeline)
+    }
+
+    /// Creates [`RenderPipeline`] using Mesh Shaders .
+    #[inline]
+    pub fn create_mesh_pipeline(&self, desc: &RawMeshPipelineDescriptor) -> RenderPipeline {
+        let wgpu_render_pipeline = self.device.create_mesh_pipeline(desc);
+        RenderPipeline::from(wgpu_render_pipeline)
     }
 
     /// Creates a [`Buffer`].

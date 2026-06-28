@@ -48,6 +48,8 @@ pub struct RenderPipelineDescriptor {
     /// Whether to zero-initialize workgroup memory by default. If you're not sure, set this to true.
     /// If this is false, reading from workgroup variables before writing to them will result in garbage values.
     pub zero_initialize_workgroup_memory: bool,
+
+    pub mesh_shader: Option<MeshShaderStages>,
 }
 
 #[derive(Copy, Clone, Debug, Error)]
@@ -124,6 +126,21 @@ fn filling_set_at<T: Clone>(vec: &mut Vec<T>, index: usize, filler: T, value: T)
     let num_to_fill = (index + 1).saturating_sub(vec.len());
     vec.extend(iter::repeat_n(filler, num_to_fill));
     vec[index] = value;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshShaderStages {
+    pub mesh: MeshShaderState,
+    pub task: Option<MeshShaderState>,
+}
+/// Describes a mesh shader stage.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct MeshShaderState {
+    pub shader: Handle<Shader>,
+    pub shader_defs: Vec<ShaderDefVal>,
+    pub entry_point: Option<Cow<'static, str>>,
+    /// Values for pipeline-overridable constants declared with `override` in this shader stage.
+    pub constants: Vec<(Cow<'static, str>, f64)>,
 }
 
 /// A descriptor for a [`Pipeline`](https://docs.rs/bevy/latest/bevy/render/render_resource/enum.Pipeline.html).
