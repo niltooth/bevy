@@ -129,10 +129,26 @@ fn filling_set_at<T: Clone>(vec: &mut Vec<T>, index: usize, filler: T, value: T)
 /// A descriptor for a [`Pipeline`](https://docs.rs/bevy/latest/bevy/render/render_resource/enum.Pipeline.html).
 ///
 /// Used to store a heterogenous collection of render and compute pipeline descriptors together.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PipelineDescriptor {
     RenderPipelineDescriptor(Box<RenderPipelineDescriptor>),
     ComputePipelineDescriptor(Box<ComputePipelineDescriptor>),
+}
+
+impl PipelineDescriptor {
+    pub fn layout(&self) -> &[BindGroupLayoutDescriptor] {
+        match self {
+            Self::RenderPipelineDescriptor(d) => &d.layout,
+            Self::ComputePipelineDescriptor(d) => &d.layout,
+        }
+    }
+
+    pub fn immediate_size(&self) -> u32 {
+        match self {
+            Self::RenderPipelineDescriptor(d) => d.immediate_size,
+            Self::ComputePipelineDescriptor(d) => d.immediate_size,
+        }
+    }
 }
 
 /// Index of a cached render pipeline in a `PipelineCache`.
